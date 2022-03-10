@@ -1,3 +1,4 @@
+const {exec} = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
@@ -5,9 +6,10 @@ var errors = require('./errors')
 	, utils = require('./utils')
 	, configs = require('./configs')
 	, video = require('./video')
-
+exec('ffmpeg -h', (err) => {
+	if (err) throw new Error('You must add ffmpeg to your path to use this module.')
+})
 var ffmpeg = function (/* inputFilepath, settings, callback */) {
-
 	/**
 	 * Retrieve the list of the codec supported by the ffmpeg software
 	 */
