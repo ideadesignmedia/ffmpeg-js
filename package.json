@@ -1,6 +1,6 @@
 {
-  "name": "ffmpeg-js",
-  "version": "1.0.0",
+  "name": "@ideadesignmedia/ffmpeg-js",
+  "version": "1.0.4",
   "main": "index.js",
   "license": "MIT",
   "dependencies": {

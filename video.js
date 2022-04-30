@@ -1,8 +1,8 @@
 var fs = require('fs')
 	, path = require('path'),
 	jimp = require('jimp');
-
-
+	let folder = path.join(process.cwd(), '.ffmpeg')
+if (!fs.existsSync(folder)) fs.mkdirSync(folder)
 let imageSize = async path => {
 	if (!fs.existsSync(path)) return null
 	return await jimp.read(path).then(img => ({ width: img.bitmap.width, height: img.bitmap.height })).catch(e => {
@@ -294,6 +294,7 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 				if (options.video.hasOwnProperty('disabled')) {
 					this.addCommand('-vn');
 				} else {
+					if (opts.floorSize) this.addCommand('-vf', `"pad=ceil(iw/2)*2:ceil(ih/2)*2"`)
 					if (options.video.hasOwnProperty('format'))
 						this.addCommand('-f', options.video.format);
 					if (options.video.hasOwnProperty('codec'))

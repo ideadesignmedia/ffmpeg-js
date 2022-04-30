@@ -6,6 +6,7 @@ var errors = require('./errors')
 	, utils = require('./utils')
 	, configs = require('./configs')
 	, video = require('./video')
+	let folder = path.join(process.cwd(), '.ffmpeg')
 exec('ffmpeg -h', (err) => {
 	if (err) throw new Error('You must add ffmpeg to your path to use this module.')
 })
@@ -61,9 +62,9 @@ var ffmpeg = function (/* inputFilepath, settings, callback */) {
 	 */
 	var _videoInfo = function (fileInput, settings) {
 		return new Promise((resolve, reject) => {
-			let tmp = `"${path.join(process.cwd(), `__fmp${new Date().getTime()}.txt`)}"`
+			let tmp = path.join(`"${path.join(folder, `__fmp${new Date().getTime()}.txt`)}"` )
 			utils.exec(['-i', `"${fileInput}"`, '2>&1', '-f', 'ffmetadata', tmp], settings).then(stdout => {
-				setTimeout(() => { if (fs.existsSync(tmp)) fs.unlink(tmp, err => { if (err) console.log(err) }) }, 3000)
+				setTimeout(() => { if (fs.existsSync(tmp)) fs.unlink(tmp, err => { if (err) console.log(err) }) }, 100)
 				var filename = /from \'(.*)\'/.exec(stdout) || []
 					, title = /(INAM|title)\s+:\s(.+)/.exec(stdout) || []
 					, artist = /artist\s+:\s(.+)/.exec(stdout) || []
@@ -168,7 +169,7 @@ var ffmpeg = function (/* inputFilepath, settings, callback */) {
 				}
 				resolve(ret);
 			}).catch(e => {
-				setTimeout(() => { if (fs.existsSync(tmp)) fs.unlink(tmp, err => { if (err) console.log(err) }) }, 3000)
+				setTimeout(() => { if (fs.existsSync(tmp)) fs.unlink(tmp, err => { if (err) console.log(err) }) }, 100)
 				reject(e)
 			})
 		})
@@ -266,8 +267,8 @@ const extractSound = (p) => {
 const addWaterMark = (v, wm) => {
 	return new Promise((res, rej) => {
 		genVid(v).then(r => {
-			if (!fs.existsSync('./watermarked')) fs.mkdirSync('./watermarked')
-			r.fnAddWatermark(wm, `./watermarked/${path.basename(v, path.extname(v))}(watermarked)${path.extname(v)}`,
+			if (!fs.existsSync(path.join(folder, './watermarked'))) fs.mkdirSync(path.join(folder, './watermarked'))
+			r.fnAddWatermark(wm, path.join(folder, `./watermarked/${path.basename(v, path.extname(v))}(watermarked)${path.extname(v)}`),
 				{ position: "SW", margin_nord: null, margin_sud: null, margin_west: null, margin_east: null },  // Position: NE NC NW SE SC SW C CE CW
 				(err, vid) => {
 					if (err) return rej(err)
@@ -290,6 +291,7 @@ const renderVideo = (o) => {
 	return new Promise((res, rej) => {
 		genVid(o.video).then(vid => {
 			let options = {force: true}
+			if (o.floorSize) options.floorSize = true
 			if (vid.metadata.audio.codec === 'pcm_s24le' && o.format) options.downsample = true
 			if (o.disableAudio) vid.disableAudio()
 			if (o.disableVideo) vid.disableVideo()
