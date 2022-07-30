@@ -7,19 +7,19 @@ var errors = require('./errors');
 /**
  * Exec the list of commands and call the callback function at the end of the process
  */
-module.exports.exec = function (commands, settings, time = 1000*60*60*24) {
+module.exports.exec = function (commands, settings = {}, time = 1000*60*60*24) {
 	// Create final command line
 	var finalCommand = [process.env.FFMPEG || 'ffmpeg', ...commands].join(" ");
 	var die = setTimeout(() => rej('Command Failed'), time)
 	return new Promise((res, rej) => {
 		console.log(`EXECUTING:`, finalCommand, settings)
-		exec(finalCommand, settings, (err, stdout, stderr) => {
+		exec(finalCommand, {...settings, silent: true}, (err, stdout, stderr) => {
 			clearTimeout(die)
 			if (err) {
 				return rej(err)
 			}
 			if (stderr) {
-				return rej(stderr)
+				return res(stderr)
 			}
 			return res(stdout)
 		})

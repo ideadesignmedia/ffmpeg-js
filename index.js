@@ -1,20 +1,47 @@
-const {exec} = require('child_process')
+const { exec } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const https = require('https')
 var errors = require('./errors')
 	, utils = require('./utils')
 	, configs = require('./configs')
-	, video = require('./video')
-	let folder = path.join(process.cwd(), '.ffmpeg')
+	, video = require('./video'), config, configure = async function (settings) {
+		var format = { modules: new Array(), encode: new Array(), decode: new Array() };
+		return await utils.exec(['-formats', '2>&1'], settings).then(stdout => {
+			var configuration = /configuration:(.*)/.exec(stdout);
+			if (configuration) {
+				var modules = configuration[1].match(/--enable-([a-zA-Z0-9\-]+)/g);
+				for (var indexModule in modules) {
+					format.modules.push(/--enable-([a-zA-Z0-9\-]+)/.exec(modules[indexModule])[1]);
+				}
+			}
+			var codecList = stdout.match(/ (DE|D|E) (.*) {1,} (.*)/g);
+			for (var i in codecList) {
+				var match = / (DE|D|E) (.*) {1,} (.*)/.exec(codecList[i]);
+				if (match) {
+					var scope = match[1].replace(/\s/g, '')
+						, extension = match[2].replace(/\s/g, '');
+					if (scope == 'D' || scope == 'DE')
+						format.decode.push(extension);
+					if (scope == 'E' || scope == 'DE')
+						format.encode.push(extension);
+				}
+			}
+			return format
+		}).catch(e => {
+			throw new Error(e)
+		})
+	}
+let folder = path.join(process.cwd(), '.ffmpeg')
 exec('ffmpeg -h', (err) => {
 	if (err) throw new Error('You must add ffmpeg to your path to use this module.')
+	config = configure()
 })
 var ffmpeg = function (/* inputFilepath, settings, callback */) {
 	/**
 	 * Retrieve the list of the codec supported by the ffmpeg software
 	 */
-	var _ffmpegInfoConfiguration = function (settings) {
+	var _ffmpegInfoConfiguration = function (settings = {}) {
 		return new Promise((resolve, reject) => {
 
 			var format = { modules: new Array(), encode: new Array(), decode: new Array() };
@@ -62,7 +89,7 @@ var ffmpeg = function (/* inputFilepath, settings, callback */) {
 	 */
 	var _videoInfo = function (fileInput, settings) {
 		return new Promise((resolve, reject) => {
-			let tmp = path.join(`"${path.join(folder, `__fmp${new Date().getTime()}.txt`)}"` )
+			let tmp = path.join(`"${path.join(folder, `__fmp${new Date().getTime()}.txt`)}"`)
 			utils.exec(['-i', `"${fileInput}"`, '2>&1', '-f', 'ffmetadata', tmp], settings).then(stdout => {
 				setTimeout(() => { if (fs.existsSync(tmp)) fs.unlink(tmp, err => { if (err) console.log(err) }) }, 100)
 				var filename = /from \'(.*)\'/.exec(stdout) || []
@@ -288,38 +315,54 @@ const extractScreenshot = (v, o) => {
 	})
 }
 const renderVideo = (o) => {
-	return new Promise((res, rej) => {
-		genVid(o.video).then(vid => {
-			let options = {force: true}
-			if (o.floorSize) options.floorSize = true
-			if (vid.metadata.audio.codec === 'pcm_s24le' && o.format) options.downsample = true
-			if (o.disableAudio) vid.disableAudio()
-			if (o.disableVideo) vid.disableVideo()
-			if (o.format) vid.setVideoFormat(o.format)
-			if (o.videoCodec) vid.setVideoCodec(o.videoCodec)
-			if (o.bitrate) vid.setVideoBitRate(o.bitrate)
-			if (o.framerate) vid.setVideoFrameRate(o.framerate)
-			if (o.startTime) vid.setVideoStartTime(o.startTime)
-			if (o.duration) vid.setVideoDuration(o.duration)
-			if (o.aspectRatio) vid.setVideoAspectRatio(o.aspectRatio)
-			if (o.size) vid.setVideoSize(o.size, true, true, '#000')
-			if (o.audioCodec) vid.setAudioCodec(o.audioCodec)
-			if (o.audioFrequency) vid.setAudioFrequency(o.audioFrequency)
-			if (o.audioChannels) vid.setAudioChannels(o.audioChannels)
-			if (o.audioBitrate) vid.setAudioBitrate(o.audioBitrate)
-			if (o.audioQuality) vid.setAudioQuality(o.audioQuality)
-			if (o.setWatermark) {
-				if (!o.setWatermark.settings || !o.setWatermark.path) return rej('The setWatermark option requires the watermark settings and the watermark path. (settings: {position, margin_nord margin_sud, margin_east, margin_west})')
-				vid.setWatermark(o.setWatermark.path, o.setWatermark.settings)
-			}
-			if (o.destination) {
-				vid.save(o.destination, options).then(() => {
-					res(o.destination)
-				}).catch(e => rej(e))
+	return new Promise(async (res, rej) => {
+		let errors
+		if (o.stream) {
+			if (config && config.encode) {
+				vid = new video(o.video, undefined, config)
 			} else {
-				return rej('destination required')
+				let conf = await configure()
+				vid = new video(o.video, undefined, conf)
 			}
-		}).catch(e => rej(e))
+		} else {
+			vid = await genVid(o.video).catch(e => errors = e)
+		}
+		if (!vid || typeof vid !== 'object' || typeof vid.setVideoFormat !== 'function') return rej(errors || 'Issue processing video')
+		let options = { force: true }
+		if (o.floorSize) options.floorSize = true
+		if (o.experimentalOpus) options.experimentalOpus = true
+		if (vid.metadata && vid.metadata.audio.codec === 'pcm_s24le' && o.format) options.downsample = true
+		if (o.disableAudio) vid.disableAudio()
+		if (o.disableVideo) vid.disableVideo()
+		if (o.format) vid.setVideoFormat(o.format)
+		if (o.videoCodec) vid.setVideoCodec(o.videoCodec)
+		if (o.bitrate) vid.setVideoBitRate(o.bitrate)
+		if (o.framerate) vid.setVideoFrameRate(o.framerate)
+		if (o.startTime) vid.setVideoStartTime(o.startTime)
+		if (o.duration) vid.setVideoDuration(o.duration)
+		if (o.aspectRatio) vid.setVideoAspectRatio(o.aspectRatio)
+		if (o.size) vid.setVideoSize(o.size, true, true, '#000')
+		if (o.audioCodec) vid.setAudioCodec(o.audioCodec)
+		if (o.audioFrequency) vid.setAudioFrequency(o.audioFrequency)
+		if (o.audioChannels) vid.setAudioChannels(o.audioChannels)
+		if (o.audioBitrate) vid.setAudioBitrate(o.audioBitrate)
+		if (o.audioQuality) vid.setAudioQuality(o.audioQuality)
+		if (o.setWatermark) {
+			if (!o.setWatermark.settings || !o.setWatermark.path) return rej('The setWatermark option requires the watermark settings and the watermark path. (settings: {position, margin_nord margin_sud, margin_east, margin_west})')
+			vid.setWatermark(o.setWatermark.path, o.setWatermark.settings)
+		}
+		if (o.stream) {
+			options.stream = o.stream
+			vid.save(null, options).then((stream) => {
+				res(stream)
+			}).catch(e => rej(e))
+		} else if (o.destination) {
+			vid.save(o.destination, options).then(() => {
+				res(o.destination)
+			}).catch(e => rej(e))
+		} else {
+			return rej('destination required')
+		}
 	})
 }
 module.exports = {

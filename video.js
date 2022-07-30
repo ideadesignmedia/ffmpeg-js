@@ -1,7 +1,8 @@
+const { spawn } = require('child_process'), { PassThrough } = require('stream'), { AbortController } = require('node-abort-controller')
 var fs = require('fs')
 	, path = require('path'),
 	jimp = require('jimp');
-	let folder = path.join(process.cwd(), '.ffmpeg')
+let folder = path.join(process.cwd(), '.ffmpeg')
 if (!fs.existsSync(folder)) fs.mkdirSync(folder)
 let imageSize = async path => {
 	if (!fs.existsSync(path)) return null
@@ -15,13 +16,13 @@ var errors = require('./errors')
 
 module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 
-	this.file_path = `"${filePath}"`;
+	this.file_path = `"${filePath}"`
 	this.info_configuration = infoConfiguration;
 	this.metadata = infoFile;
 
 	var commands = new Array()
 		, inputs = new Array()
-		, filtersComlpex = new Array(),
+		, filtersComplex = new Array(),
 		cFilters = new Array(),
 		beforeOutput = new Array()
 		, output = null;
@@ -51,9 +52,9 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 				cFilters.push(argument)
 			}
 		} else if (first) {
-			filtersComlpex.unshift(argument)
+			filtersComplex.unshift(argument)
 		} else {
-			filtersComlpex.push(argument);
+			filtersComplex.push(argument);
 		}
 	}
 
@@ -288,12 +289,13 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 		}
 	}
 
-	this.save = function (destionationFileName, opts, callback) {
+	this.save = function (destinationFileName, opts = {}, callback) {
 		return new Promise(async (res, rej) => {
 			if (options.hasOwnProperty('video')) {
 				if (options.video.hasOwnProperty('disabled')) {
 					this.addCommand('-vn');
 				} else {
+					if (opts.experimentalOpus) this.addCommand('-strict', '-2')
 					if (opts.floorSize) this.addCommand('-vf', `"pad=ceil(iw/2)*2:ceil(ih/2)*2"`)
 					if (options.video.hasOwnProperty('format'))
 						this.addCommand('-f', options.video.format);
@@ -317,20 +319,20 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 							let vW = this.metadata.video.resolutionSquare.w
 							let vH = this.metadata.video.resolutionSquare.h
 							if (vW < width || vH < height) {
-								let aspect = width/height
-								let yS = Math.round(vH-(vH*.03))
-								let xS = Math.round(yS*aspect)
+								let aspect = width / height
+								let yS = Math.round(vH - (vH * .03))
+								let xS = Math.round(yS * aspect)
 								if (xS > vW) {
-									xS = Math.round(vW-(vW*.03))
-									yS = Math.round(xS/aspect)
+									xS = Math.round(vW - (vW * .03))
+									yS = Math.round(xS / aspect)
 								}
-								return {xS, yS}
+								return { xS, yS }
 							} else {
-								return {xS: width, xY: height}
+								return { xS: width, xY: height }
 							}
 						}
 						let scale = await gScale()
-						let {xS, yS} = scale
+						let { xS, yS } = scale
 						this.addFilterComplex(`[1]scale=w=${xS}:h=${yS}[wm]`, true, true)
 					}
 					if (options.video.hasOwnProperty('size')) {
@@ -370,14 +372,31 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 					this.addCommand('-map', '[a]', true)
 				}
 			}
-			setOutput(destionationFileName);
-			if (fs.existsSync(destionationFileName)) {
-				if (!opts.force) return rej('Output file already exists')
-				fs.unlinkSync(destionationFileName)
+			if (opts && opts.stream) {
+				let { type, options = {} } = opts.stream
+				if (type === 'transform') {
+					inputs = options.inputs || ['pipe:3']
+					setOutput('pipe:4');
+				} else if (type === 'input') {
+					inputs = options.inputs || ['pipe:3']
+					setOutput(destinationFileName);
+				} else {
+					setOutput('pipe:3');
+				}
+				this.addCommand('-movflags', 'frag_keyframe+empty_moov');
+				let commands = finalCommands()
+				resetCommands(this)
+				createStream(commands, { type, ...options }).then(stream => res(stream)).catch(e => rej(e))
+			} else {
+				setOutput(destinationFileName);
+				if (fs.existsSync(destinationFileName)) {
+					if (!opts.force) return rej('Output file already exists')
+					fs.unlinkSync(destinationFileName)
+				}
+				execCommand().then(u => { res(u) }).catch(e => {
+					rej(e)
+				});
 			}
-			execCommand().then(u => { res(u) }).catch(e => {
-				rej(e)
-			});
 		})
 	}
 
@@ -385,7 +404,7 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 	var resetCommands = function (self) {
 		commands = new Array()
 		inputs = [self.file_path];
-		filtersComlpex = new Array();
+		filtersComplex = new Array();
 		output = null;
 		options = new Object();
 	}
@@ -443,28 +462,73 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 
 		return { width: width, height: height, aspect: aspect };
 	}
-
+	var finalCommands = function () {
+		return ['-i']
+			.concat(inputs.join(' -i '))
+			.concat(commands.join(' '))
+			.concat(filtersComplex.length > 0 || cFilters.length > 0 ? (() => {
+				let a = []
+				let b = cFilters.length > 0 ? a.concat(cFilters.map(u => u + ';').join(' ')) : a
+				let c = filtersComplex.length > 0 ? b.concat(filtersComplex.join(', ')) : b
+				let d = c.join(' ')
+				let f = /(,|;)$/.test(d) ? d.split('').splice(0, d.length - 1).join('') : d
+				return '-filter_complex "' + f + '"'
+			})() : [])
+			.concat(beforeOutput.join(' '))
+			.concat([output]).filter(a => a)
+	}
+	var createStream = (commands, options) => {
+		return new Promise((res, rej) => {
+			let stream = new PassThrough()
+			let inputStream
+			let cm = commands.map(u => u.split('"').join('')).reduce((a, b) => {
+				return a.concat(b.split(' '))
+			}, [])
+			let abort = new AbortController()
+			let pipes = 1
+			if (inputs.length > 1) for (let i = 0; i < inputs.length - 1; i++) pipes++;
+			if (options.type === 'transform') {
+				inputStream = new PassThrough()
+				pipes++
+			}
+			let flop = () => {
+				console.log('Signal Close on Child...')
+				try {
+					abort.abort()
+				} catch(e) { console.log(e) }
+			}
+			let child = spawn(process.env.FFMPEG || 'ffmpeg', cm, { signal: abort.signal, stdio: ['inherit', 'inherit', 'ignore', ...Array(pipes).fill('pipe')] })
+			child.on('stderr', e => {console.log(e); flop()})
+			child.on('close', (code, signal) => console.log(`Close Child: ${code} ${signal}`))
+			child.on('exit', (code, signal) => console.log(`Exit Child: ${code} ${signal}`))
+			child.on('error', (e) => rej(e))
+			stream.on('error', () => {flop(); console.log(e)})
+			if (options.type === 'transform') {
+				inputStream.on('error', e => {
+					flop(); console.log(e)
+				})
+				child.stdio[2 + pipes].pipe(stream)
+				inputStream.pipe(child.stdio[3])
+				return res({
+					input: inputStream, output: stream, abort: flop
+				})
+			} else if (options.type === 'input') {
+				stream.pipe(child.stdio[3])
+			} else {
+				child.stdio[3].pipe(stream)
+			}
+			res(stream)
+		})
+	}
 	var execCommand = function (callback, folder) {
 		return new Promise((resolve, reject) => {
 			var onlyDestinationFile = folder != undefined ? false : true;
-			var finalCommands = ['-i']
-				.concat(inputs.join(' -i '))
-				.concat(commands.join(' '))
-				.concat(filtersComlpex.length > 0 || cFilters.length > 0 ? (() => {
-					let a = []
-					let b = cFilters.length > 0 ? a.concat(cFilters.map(u => u+';').join(' ')) : a
-					let c = filtersComlpex.length > 0 ? b.concat(filtersComlpex.join(', ')) : b
-					let d = c.join(' ')
-					let f = /(,|;)$/.test(d) ? d.split('').splice(0, d.length - 1).join('') : d
-					return '-filter_complex "' + f + '"'
-				})() : [])
-				.concat(beforeOutput.join(' '))
-				.concat([output]);
+			var command = finalCommands()
 			resetCommands(this);
-			utils.exec(finalCommands, settings).then(() => {
+			utils.exec(command, settings).then(() => {
 				var result = null;
 				if (onlyDestinationFile) {
-					result = finalCommands[finalCommands.length - 1];
+					result = command[command.length - 1];
 				} else {
 					if (folder.charAt(folder.length - 1) == "/")
 						folder = folder.substr(0, folder.length - 1);
@@ -477,12 +541,12 @@ module.exports = function (filePath, settings, infoConfiguration, infoFile) {
 		})
 	}
 
-	this.fnExtractSoundToMP3 = function (destionationFileName, callback) {
-		if (fs.existsSync(destionationFileName))
-			fs.unlinkSync(destionationFileName);
+	this.fnExtractSoundToMP3 = function (destinationFileName, callback) {
+		if (fs.existsSync(destinationFileName))
+			fs.unlinkSync(destinationFileName);
 
-		var destinationDirName = path.dirname(destionationFileName)
-			, destinationFileNameWE = path.basename(destionationFileName, path.extname(destionationFileName)) + '.mp3'
+		var destinationDirName = path.dirname(destinationFileName)
+			, destinationFileNameWE = path.basename(destinationFileName, path.extname(destinationFileName)) + '.mp3'
 			, finalPath = path.join(destinationDirName, destinationFileNameWE);
 
 		resetCommands(this);
